@@ -1,11 +1,116 @@
 import * as React from 'react';
-import { assign, createMachine } from 'xstate';
-import { render, cleanup, fireEvent } from '@testing-library/react';
-import { useInterpret, useSelector } from '../src';
+import {ActorRefFrom, assign, createMachine, spawn} from 'xstate';
+import {render, cleanup, fireEvent} from '@testing-library/react';
+import {useInterpret, useSelector, useActor, useMachine} from '../src';
 
 afterEach(cleanup);
 
 describe('useSelector', () => {
+  it('should update context when used with a spawned machine', () => {
+    const spawnedMachine = createMachine<{ count: number }>({
+      id: "spawned",
+      initial: "inactive",
+      context: {
+        count: 0
+      },
+      states: {
+        inactive: {
+          on: {
+            TOGGLE: "active"
+          }
+        },
+        active: {
+          on: {
+            TOGGLE: "inactive"
+          }
+        }
+      },
+      on: {
+        UPDATE_COUNT: {
+          actions: assign({
+            count: (ctx) => ctx.count + 1
+          })
+        }
+      }
+    });
+    const parentMachine = createMachine<{ childActor: Object }>({
+      initial: 'idle',
+      context: {
+        childActor: {},
+      },
+      states: {
+        idle: {
+          entry: ['spawnMachine']
+        }
+      },
+    }, {
+      actions: {
+        spawnMachine: assign({
+          childActor: () => {
+            return spawn(spawnedMachine, 'spawnedMachine');
+          }
+        })
+      },
+    });
+
+    const App = () => {
+      const [state] = useMachine(parentMachine);
+      return (
+        <div className="App">
+          <ChildComponent actor={state.context.childActor as ActorRefFrom<typeof spawnedMachine>}/>
+        </div>
+      );
+    };
+
+    const selector = (state) => state.context.count;
+
+    const ChildComponent: React.FC<{ actor: ActorRefFrom<typeof spawnedMachine> }> = ({actor}) => {
+      const count = useSelector(actor, selector);
+      const [state] = useActor(actor);
+
+      return (
+        <>
+          <div>
+            (useSelector - does not update) Child Actor's state.context.count:
+            <span data-testid="useSelectorCount">{count}</span>
+          </div>
+
+          <div>
+            (useActor) Child Actor's state.context.count:
+            <span data-testid="useActorCount">{state.context.count}</span>
+          </div>
+
+          <button data-testid="incrementButton" onClick={() => actor.send("UPDATE_COUNT")}>
+            Update Spawned Machine
+          </button>
+        </>
+      );
+    };
+
+    const {getByTestId} = render(
+      <React.StrictMode>
+        <App/>
+      </React.StrictMode>
+    );
+    const $useSelectorCount = getByTestId('useSelectorCount');
+    const $useActorCount = getByTestId('useActorCount');
+    const $incrementButton = getByTestId('incrementButton');
+
+    expect($useActorCount.textContent).toBe('0');
+    expect($useSelectorCount.textContent).toBe('0');
+
+    // does not invoke the subscrition callback in useSelector.ts:42
+    fireEvent.click($incrementButton);
+
+    expect($useActorCount.textContent).toBe('1');
+    expect($useSelectorCount.textContent).toBe('1');
+
+    fireEvent.click($incrementButton);
+
+    expect($useActorCount.textContent).toBe('2');
+    expect($useSelectorCount.textContent).toBe('2');
+  });
+
   it('only rerenders for selected values', () => {
     const machine = createMachine<{ count: number; other: number }>({
       initial: 'active',

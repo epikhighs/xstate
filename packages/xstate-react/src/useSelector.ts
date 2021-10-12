@@ -40,6 +40,7 @@ export function useSelector<
     updateSelectedIfChanged(initialSelected);
 
     const sub = actor.subscribe((emitted) => {
+      console.log(`does not get invoked when used in spawned machine`);
       const nextSelected = selector(emitted);
       updateSelectedIfChanged(nextSelected);
     });
